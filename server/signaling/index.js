@@ -106,7 +106,7 @@ wss.on("connection", (ws) => {
         console.log('ice :>> ', data);
         clients.get(data.to).send(
           JSON.stringify({
-            ice: { ice: data.ice, type: "ice" },
+            ice: data.ice,
             from: clientId,
             type: "ice",
           })
