@@ -3,12 +3,13 @@ import { WebSocketServer } from "ws";
 
 const port = 3000;
 const wss = new WebSocketServer({ port });
+let c = 1;
 
 const rooms = new Map();
 const clients = new Map();
 
 function printDetails(map) {
-  console.table(map);
+  // console.table(map);
 }
 
 function isRoomPresent(roomId) {
@@ -22,6 +23,8 @@ function createRoom() {
 }
 
 function joinRoom(clientId, roomId, ws) {
+  if (!rooms.has(roomId)) roomId = createRoom(); // <> adding room
+
   rooms.get(roomId).push(ws);
   clients.get(clientId).room = roomId;
 }
@@ -39,7 +42,7 @@ function leaveRoom(clientId) {
 }
 
 wss.on("connection", (ws) => {
-  const clientId = uuidv4();
+  const clientId = c++;
   ws.clientId = clientId;
   clients.set(clientId, ws);
   console.log("connected");
@@ -48,7 +51,6 @@ wss.on("connection", (ws) => {
     console.log(clientId);
     const data = JSON.parse(message);
     let roomId;
-    console.log(data);
 
     if (data.roomId) {
       roomId = data.roomId;
@@ -65,6 +67,14 @@ wss.on("connection", (ws) => {
 
       case "join":
         leaveRoom(clientId); // To exit previous room
+
+        const peerInfo = [];
+        for (let client of clients) {
+          if (client[0] === clientId) continue;
+          peerInfo.push(client[0]);
+        }
+        ws.send(JSON.stringify({ type: "peerInfo", peerInfo }));
+
         joinRoom(clientId, roomId, ws);
         break;
 
@@ -73,43 +83,34 @@ wss.on("connection", (ws) => {
         break;
 
       case "offer":
-        for (let client of clients) {
-          if (client[0] == clientId) continue;
-
-          client[1].send(
-            JSON.stringify({
-              offer: { sdp: data.offer.sdp, type: "offer" },
-              clientId,
-              type: "offer",
-            })
-          );
-        }
+        clients.get(data.to).send(
+          JSON.stringify({
+            offer: { sdp: data.offer.sdp, type: "offer" },
+            from: clientId,
+            type: "offer",
+          })
+        );
         break;
 
       case "answer":
-        let currClientWs = clients.get(data.clientId);
-        /* for (let client of clients) {
-          if (client[0] == clientId) continue;
-
-          client[1].send(
-            JSON.stringify({ sdp: data.answer.sdp, type: "answer" })
-          );
-        } */
-        currClientWs.send(
+        clients.get(data.to).send(
           JSON.stringify({
             answer: { sdp: data.answer.sdp, type: "answer" },
-            clientId,
+            from: clientId,
             type: "answer",
           })
         );
         break;
 
       case "ice":
-        for (let client of clients) {
-          if (client[0] == clientId) continue;
-
-          client[1].send(JSON.stringify({ ice: data.ice, type: "ice" }));
-        }
+        console.log('ice :>> ', data);
+        clients.get(data.to).send(
+          JSON.stringify({
+            ice: { ice: data.ice, type: "ice" },
+            from: clientId,
+            type: "ice",
+          })
+        );
         break;
 
       case "bye":

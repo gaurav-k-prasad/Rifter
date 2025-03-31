@@ -31,7 +31,6 @@ const minimize = document.querySelector("#local-video-wrapper img");
 
 let socket = initiateWebSocket();
 let stream;
-let peerConnection;
 
 const clients = new Map();
 
@@ -40,8 +39,7 @@ async function openMediaDevices(constraints) {
 }
 
 function initiateWebSocket() {
-  // return new WebSocket("https://x8c19r2x-3000.inc1.devtunnels.ms/");
-  return new WebSocket("ws://localhost:3000");
+  return new WebSocket("https://x8c19r2x-3000.inc1.devtunnels.ms/");
 }
 
 function initDataChannel(channel) {
@@ -56,14 +54,16 @@ function initDataChannel(channel) {
   });
 }
 
+let c = 0;
+
 async function initPeerConnection(configuration) {
   const peerConnection = new RTCPeerConnection(configuration);
   peerConnection.icePending = [];
 
   peerConnection.addEventListener("icecandidate", (event) => {
     console.log("ice candidate found");
-    console.log(peerConnection.to);
     if (event.candidate) {
+      c++;
       socket.send(
         JSON.stringify({
           to: peerConnection.to,
@@ -81,6 +81,9 @@ async function initPeerConnection(configuration) {
   });
 
   peerConnection.addEventListener("icegatheringstatechange", () => {
+    if (peerConnection.iceConnectionState === "failed") {
+      console.error("ICE failed, restarting...");
+    }
     console.log(
       "ICE Gathering State Changed:",
       peerConnection.iceGatheringState
@@ -94,6 +97,7 @@ async function initPeerConnection(configuration) {
   });
 
   peerConnection.addEventListener("datachannel", (event) => {
+    console.log("data channel called");
     peerConnection.channel = event.channel;
     initDataChannel(peerConnection.channel);
   });
@@ -106,9 +110,7 @@ async function initPeerConnection(configuration) {
 
 async function hangup(caller = true) {
   for (let peerConnection of clients) {
-    if (peerConnection[1].channel) {
-      peerConnection[1].channel.close();
-    }
+    if (peerConnection[1].channel) peerConnection[1].channel.close();
 
     peerConnection[1].getSenders().forEach((sender) => {
       peerConnection[1].removeTrack(sender);
@@ -117,119 +119,81 @@ async function hangup(caller = true) {
     peerConnection[1].close();
     console.log("call ended");
   }
-  // if (caller) socket.send(JSON.stringify({ type: "bye" }));
-
-  currStatus = ANSWERING;
-  peerConnection = await initPeerConnection(configuration);
+  clients.clear();
 }
 
 async function makeCall() {
-  currStatus = CALLING;
-  /*   
-  const peerConnection = await initPeerConnection(configuration);
-  peerConnection.channel = peerConnection.createDataChannel("channel");
-  initDataChannel(peerConnection.channel);
-
-  const offer = await peerConnection.createOffer();
-  await peerConnection.setLocalDescription(offer);
-  socket.send(JSON.stringify({ offer, type: "offer" }));
-*/
   socket.send(JSON.stringify({ type: "join" }));
 }
 
-socket.onmessage = async (message) => {
+let d = 0;
+socket.addEventListener("message", async (message) => {
   const data = JSON.parse(message.data);
 
-  if (data.type == "bye") {
-    await hangup(false);
-  } else if (data.type == "ice") {
-    console.log(clients, data.clientId);
-    if (clients.has(data.clientId)) {
-      let peerConnection = clients.get(data.clientId);
+  if (data.type == "bye") await hangup(false);
+  else if (data.type == "ice") {
+    let peerConnection = clients.get(data.from);
+    if (clients.has(data.from)) {
+      d++;
       await peerConnection.addIceCandidate(data.ice);
     } else {
       peerConnection.icePending.push(data.ice);
     }
-  } else if (data.type === "peerInfo") {
+  } else if (data.type == "peerInfo") {
     console.log(data.peerInfo);
     for (let client of data.peerInfo) {
       const peerConnection = await initPeerConnection();
       peerConnection.to = client;
       peerConnection.channel = peerConnection.createDataChannel("channel");
       initDataChannel(peerConnection.channel);
-      clients.set(client, peerConnection);
+
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
+      clients.set(client, peerConnection);
+
       socket.send(JSON.stringify({ offer, type: "offer", to: client }));
     }
   } else if (data.answer) {
-    /* && currStatus == CALLING) */
     console.log("calling :>> ", data.answer);
 
-    let pc = peerConnection;
-    clients.set(data.clientId, pc);
-    peerConnection = await initPeerConnection(configuration);
-
+    const peerConnection = clients.get(data.from);
     const remoteDesc = new RTCSessionDescription(data.answer);
-    console.log("peerConnection.remoteDescription :>> ", pc.signalingState);
-    await pc.setRemoteDescription(remoteDesc);
-    pc.icePending.forEach((item) => {
-      pc.addIceCandidate(item);
-    });
-  } else if (data.offer) {
-    /* && currStatus == ANSWERING) */
-    console.log("answering :>>", data.offer);
-    console.log(peerConnection);
 
-    peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-    peerConnection.icePending.forEach((item) => {
-      peerConnection.addIceCandidate(item);
+    peerConnection.icePending.forEach(async (ice) => {
+      await peerConnection.addIceCandidate(ice);
     });
+
+    await peerConnection.setRemoteDescription(remoteDesc);
+  } else if (data.offer) {
+    console.log("answering :>>", data.offer);
+
+    const peerConnection = await initPeerConnection();
+    peerConnection.to = data.from;
+    clients.set(data.from, peerConnection);
+
+    const remoteDesc = new RTCSessionDescription(data.offer);
+    peerConnection.icePending.forEach(async (ice) => {
+      await peerConnection.addIceCandidate(ice);
+    });
+
+    peerConnection.setRemoteDescription(remoteDesc);
+
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
-    clients.set(data.clientId, peerConnection);
-    peerConnection = await initPeerConnection(configuration);
 
-    socket.send(
-      JSON.stringify({
-        answer,
-        clientId: data.clientId,
-        type: "answer",
-      })
-    );
+    socket.send(JSON.stringify({ answer, to: data.from, type: "answer" }));
   }
-};
-/* 
-form.addEventListener("submit", (e) => {
-  e.preventDefault();
-  /* e.preventDefault();
-  const formData = new FormData(form);
-  const roomId = formData.get("room-id");
-  const option = formData.get("option");
-
-  if (socket?.OPEN) {
-    socket.send(JSON.stringify({ type: option, roomId }));
-  } *
-  makeCall();
-});
-
-hangUpBtn.addEventListener("click", async () => {
-  await hangup();
-}); 
-*/
-
-minimize.addEventListener("click", (e) => {
-  localVideoWrapper.style.bottom = "1rem";
-  localVideoWrapper.style.right = "1rem";
 });
 
 async function main() {
   try {
     stream = await openMediaDevices(constraints);
-    peerConnection = await initPeerConnection(configuration);
   } catch (error) {
     console.error("Error accessing media devices.", error);
   }
 }
 
 main();
+
+// data.from -> offers/answer
+// data.to -> ice
