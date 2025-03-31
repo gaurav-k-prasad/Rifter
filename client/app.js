@@ -100,15 +100,27 @@ async function initPeerConnection(configuration) {
   return peerConnection;
 }
 
-async function hangup(caller = true) {
-  for (let peerConnection of clients) {
-    if (peerConnection[1].channel) peerConnection[1].channel.close();
+async function hangup(caller = true, userId) {
+  function close(user) {
+    if (user.channel) user.channel.close();
 
-    peerConnection[1].getSenders().forEach((sender) => {
-      peerConnection[1].removeTrack(sender);
+    user.getSenders().forEach((sender) => {
+      user.removeTrack(sender);
     });
 
-    peerConnection[1].close();
+    user.close();
+  }
+
+  if (!caller) {
+    close(clients.get(userId));
+    clients.delete(userId);
+    return;
+  }
+
+  for (let peerConnection of clients) {
+    socket.send(JSON.stringify({ type: "bye", user: peerConnection[0] }));
+
+    close(peerConnection[1]);
     console.log("call ended");
   }
   clients.clear();
@@ -122,8 +134,9 @@ let d = 0;
 socket.addEventListener("message", async (message) => {
   const data = JSON.parse(message.data);
 
-  if (data.type == "bye") await hangup(false);
-  else if (data.type == "ice") {
+  if (data.type == "bye") {
+    await hangup(false, data.user);
+  } else if (data.type == "ice") {
     let peerConnection = clients.get(data.from);
     if (clients.has(data.from)) {
       d++;

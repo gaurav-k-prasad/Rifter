@@ -103,7 +103,6 @@ wss.on("connection", (ws) => {
         break;
 
       case "ice":
-        console.log('ice :>> ', data);
         clients.get(data.to).send(
           JSON.stringify({
             ice: data.ice,
@@ -114,11 +113,12 @@ wss.on("connection", (ws) => {
         break;
 
       case "bye":
-        for (let client of clients) {
-          if (client[0] == clientId) continue;
-
-          client[1].send(JSON.stringify({ type: "bye" }));
-        }
+        clients.get(data.user).send(
+          JSON.stringify({
+            user: clientId,
+            type: "bye",
+          })
+        );
         break;
     }
 
@@ -127,6 +127,16 @@ wss.on("connection", (ws) => {
 
   ws.on("close", () => {
     const clientRoom = clients.get(clientId).room;
+
+    for (let client of clients) {
+      client[1].send(
+        JSON.stringify({
+          user: clientId,
+          type: "bye",
+        })
+      );
+    }
+
     if (clientRoom != undefined) leaveRoom(clientId, clientRoom);
     clients.delete(clientId);
 
