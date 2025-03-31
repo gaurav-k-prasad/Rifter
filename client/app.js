@@ -139,18 +139,24 @@ socket.onmessage = async (message) => {
     } catch (e) {
       console.error("Error adding received ice candidate", e);
     }
-  } else if (data.type == "answer" && currStatus == CALLING) {
-    console.log("calling :>> ", data);
+  } else if (data.answer && currStatus == CALLING) {
+    console.log("calling :>> ", data.answer);
 
-    const remoteDesc = new RTCSessionDescription(data);
+    const remoteDesc = new RTCSessionDescription(data.answer);
     await peerConnection.setRemoteDescription(remoteDesc);
-  } else if (data.type == "offer" && currStatus == ANSWERING) {
-    console.log("answering :>>", data);
+  } else if (data.offer && currStatus == ANSWERING) {
+    console.log("answering :>>", data.offer);
 
-    peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+    peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
-    socket.send(JSON.stringify({ answer, type: "answer" }));
+    socket.send(
+      JSON.stringify({
+        answer,
+        clientId: data.clientId,
+        type: "answer",
+      })
+    );
   }
 };
 /* 
