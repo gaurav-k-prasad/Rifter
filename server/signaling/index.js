@@ -9,7 +9,7 @@ const rooms = new Map();
 const clients = new Map();
 
 function printDetails(map) {
-  // console.table(map);
+  console.table(map);
 }
 
 function isRoomPresent(roomId) {

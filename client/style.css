@@ -8,11 +8,19 @@ body {
   background-color: #f1efec;
   color: #f1efec;
   font-family: "Arial", sans-serif;
-  height: 100svh;
+  min-height: 100svh;
 }
 
-#self-video {
+.video {
   scale: -1 1;
+}
+
+.remote-video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 1rem;
+  background-color: #123458;
+  position: relative;
 }
 
 header {
@@ -43,9 +51,8 @@ main {
 }
 
 .videos {
-  display: flex;
-  justify-content: center;
-  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
   gap: 1rem;
   margin: 1rem;
   background-color: black;

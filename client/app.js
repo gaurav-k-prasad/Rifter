@@ -4,29 +4,47 @@ let currStatus = ANSWERING;
 const configuration = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" },
-    { urls: "stun:stun2.l.google.com:19302" },
-    { urls: "stun:stun3.l.google.com:19302" },
-    { urls: "stun:stun4.l.google.com:19302" },
+    { urls: "stun:stun.relay.metered.ca:80" },
+    {
+      urls: "turn:global.relay.metered.ca:80",
+      username: "9afb1bc00bf799308f61f792",
+      credential: "yMq1oDcHgpePXJOv",
+    },
+    {
+      urls: "turn:global.relay.metered.ca:80?transport=tcp",
+      username: "9afb1bc00bf799308f61f792",
+      credential: "yMq1oDcHgpePXJOv",
+    },
+    {
+      urls: "turn:global.relay.metered.ca:443",
+      username: "9afb1bc00bf799308f61f792",
+      credential: "yMq1oDcHgpePXJOv",
+    },
+    {
+      urls: "turns:global.relay.metered.ca:443?transport=tcp",
+      username: "9afb1bc00bf799308f61f792",
+      credential: "yMq1oDcHgpePXJOv",
+    },
   ],
 };
+
 const constraints = {
   audio: { noiseSuppression: true },
   video: {
     backgroundBlur: false,
     aspectRatio: 16 / 9,
-    frameRate: { ideal: 30, max: 60, min: 30 },
+    frameRate: { ideal: 12, max: 12, min: 12 },
     facingMode: "user",
-    width: { ideal: 1280, max: 1920, min: 640 },
-    height: { ideal: 720, max: 1080, min: 480 },
+    height: { ideal: 360, max: 1280, min: 360 },
+    window: { ideal: 640, max: 720, min: 640 },
   },
 };
 
-const remoteVideo = document.querySelector("#remote-video");
 const localVideo = document.querySelector("#local-video");
+const videos = document.querySelector(".videos");
 const localVideoWrapper = document.querySelector("#local-video-wrapper");
 const hangUpBtn = document.querySelector("#hang-up");
-const form = document.querySelector("form");
+const createJoinBtn = document.querySelector("#create-join");
 const minimize = document.querySelector("#local-video-wrapper img");
 
 let socket = initiateWebSocket();
@@ -34,12 +52,24 @@ let stream;
 
 const clients = new Map();
 
+function createRemoteVideo() {
+  const video = document.createElement("video");
+  videos.appendChild(video);
+  video.classList.add("video");
+  video.classList.add("remote-video");
+  video.autoplay = true;
+  video.playsInline = true;
+
+  return video;
+}
+
 async function openMediaDevices(constraints) {
   return await navigator.mediaDevices.getUserMedia(constraints);
 }
 
 function initiateWebSocket() {
   return new WebSocket("https://x8c19r2x-3000.inc1.devtunnels.ms/");
+  // return new WebSocket("ws://localhost:3000");
 }
 
 function initDataChannel(channel) {
@@ -86,8 +116,13 @@ async function initPeerConnection(configuration) {
 
   peerConnection.addEventListener("track", async (e) => {
     const [remoteStream] = e.streams;
-    remoteVideo.classList.remove("hidden");
-    remoteVideo.srcObject = remoteStream;
+    let video = clients.get(peerConnection.to).video;
+    if (!video) {
+      video = createRemoteVideo();
+      clients.get(peerConnection.to).video = video;
+    }
+    console.log(clients.get(peerConnection.to));
+    video.srcObject = remoteStream;
   });
 
   peerConnection.addEventListener("datachannel", (event) => {
@@ -102,13 +137,14 @@ async function initPeerConnection(configuration) {
 
 async function hangup(caller = true, userId) {
   function close(user) {
-    if (user.channel) user.channel.close();
+    if (user?.connection.channel) user.connection.channel.close();
+    user.video.remove();
 
-    user.getSenders().forEach((sender) => {
-      user.removeTrack(sender);
+    user.connection.getSenders().forEach((sender) => {
+      user.connection.removeTrack(sender);
     });
 
-    user.close();
+    user.connection.close();
   }
 
   if (!caller) {
@@ -127,6 +163,7 @@ async function hangup(caller = true, userId) {
 }
 
 async function makeCall() {
+  hangup();
   socket.send(JSON.stringify({ type: "join" }));
 }
 
@@ -137,7 +174,7 @@ socket.addEventListener("message", async (message) => {
   if (data.type == "bye") {
     await hangup(false, data.user);
   } else if (data.type == "ice") {
-    let peerConnection = clients.get(data.from);
+    let peerConnection = clients.get(data.from).connection;
     if (clients.has(data.from)) {
       d++;
       await peerConnection.addIceCandidate(data.ice);
@@ -147,21 +184,21 @@ socket.addEventListener("message", async (message) => {
   } else if (data.type == "peerInfo") {
     console.log(data.peerInfo);
     for (let client of data.peerInfo) {
-      const peerConnection = await initPeerConnection();
+      const peerConnection = await initPeerConnection(configuration);
       peerConnection.to = client;
       peerConnection.channel = peerConnection.createDataChannel("channel");
       initDataChannel(peerConnection.channel);
 
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
-      clients.set(client, peerConnection);
+      clients.set(client, { connection: peerConnection });
 
       socket.send(JSON.stringify({ offer, type: "offer", to: client }));
     }
   } else if (data.answer) {
     console.log("calling :>> ", data.answer);
 
-    const peerConnection = clients.get(data.from);
+    const peerConnection = clients.get(data.from).connection;
     const remoteDesc = new RTCSessionDescription(data.answer);
 
     peerConnection.icePending.forEach(async (ice) => {
@@ -172,9 +209,9 @@ socket.addEventListener("message", async (message) => {
   } else if (data.offer) {
     console.log("answering :>>", data.offer);
 
-    const peerConnection = await initPeerConnection();
+    const peerConnection = await initPeerConnection(configuration);
     peerConnection.to = data.from;
-    clients.set(data.from, peerConnection);
+    clients.set(data.from, { connection: peerConnection });
 
     const remoteDesc = new RTCSessionDescription(data.offer);
     peerConnection.icePending.forEach(async (ice) => {
@@ -188,6 +225,14 @@ socket.addEventListener("message", async (message) => {
 
     socket.send(JSON.stringify({ answer, to: data.from, type: "answer" }));
   }
+});
+
+createJoinBtn.addEventListener("click", (e) => {
+  makeCall();
+});
+
+hangUpBtn.addEventListener("click", (e) => {
+  hangup();
 });
 
 async function main() {
