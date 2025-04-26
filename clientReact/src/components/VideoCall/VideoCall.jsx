@@ -1,16 +1,16 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   handleSocketMessage,
   hangup,
-  initDataChannel,
   initiateWebSocket,
-  initPeerConnection,
   makeCall,
   openMediaDevices,
 } from "../../utils/videoCallUtils.js";
 
-const CALLING = 0;
-const ANSWERING = 1;
+const CREATE = "create";
+const JOIN = "join";
+const IDLE = "idle";
+const CALL = "call";
 
 const configuration = {
   iceServers: [
@@ -35,27 +35,107 @@ const constraints = {
 };
 
 const VideoCall = () => {
-  const stream = useRef(null);
-  const socket = useRef(null);
-  const [clients, setClients] = useState({});
+  const [isConnected, setIsConnected] = useState(null);
+  const [roomMode, setRoomMode] = useState(CREATE);
+  const [callMode, setCallMode] = useState(IDLE);
+  const [clients, setClients] = useState(new Map());
+  const videoRef = useRef(null);
+
+  const clientsRef = useRef(clients);
+  const streamRef = useRef(null);
+  const socketRef = useRef(null);
+
+  useEffect(() => {
+    clientsRef.current = clients;
+    if (clients.size == 0) setCallMode(IDLE);
+  }, [clients]);
+
+  useEffect(() => {
+    if (!socketRef.current) {
+      socketRef.current = initiateWebSocket();
+
+      socketRef.current.addEventListener("open", () => {
+        setIsConnected(true);
+      });
+      socketRef.current.addEventListener("message", async (message) => {
+        handleSocketMessage(
+          message,
+          socketRef.current,
+          clientsRef.current,
+          configuration,
+          streamRef.current,
+          videoRef.current, // todo remote video
+          setClients,
+          setCallMode
+        );
+      });
+      socketRef.current.addEventListener("close", () => {
+        setIsConnected(false);
+      });
+    }
+
+    return () => {
+      socketRef.current?.close();
+    };
+  }, []);
 
   useEffect(() => {
     (async () => {
-      stream.current = await openMediaDevices(constraints);
+      streamRef.current = await openMediaDevices(constraints);
     })();
   }, []);
 
-  useEffect(() => {
-    socket.current = initiateWebSocket();
-    socket.current.addEventListener("message", async (message) => {
-      await handleSocketMessage(message, socket.current, clients, configuration, stream.current, remoteVideo);
-    });
+  if (!isConnected) {
+    return <p>Connecting...</p>;
+  }
 
-    return () => {
-      socket.current.close();
-      socket.current = null;
-    };
-  }, []);
+  return (
+    <fieldset>
+      <video autoPlay muted draggable="false" ref={videoRef}></video>
+      {callMode == IDLE && (
+        <select
+          name="mode"
+          id="mode"
+          value={roomMode}
+          onChange={(e) => {
+            setRoomMode(e.target.value);
+          }}
+        >
+          <option value="create">Create</option>
+          <option value="join">Join</option>
+        </select>
+      )}
+      {callMode == IDLE && roomMode == JOIN && (
+        <input type="text" name="" id="" placeholder="Room ID" />
+      )}
+
+      {callMode == CALL ? (
+        <button
+          onClick={() => {
+            hangup(
+              true,
+              videoRef.current,
+              socketRef.current,
+              clients,
+              setClients
+            );
+            setCallMode(IDLE);
+          }}
+        >
+          Hang up
+        </button>
+      ) : (
+        <button
+          onClick={() => {
+            makeCall(socketRef.current, clients, setClients);
+            setCallMode(CALL);
+          }}
+        >
+          {roomMode == CREATE ? "Create" : "Join"}
+        </button>
+      )}
+    </fieldset>
+  );
 };
 
 export default VideoCall;

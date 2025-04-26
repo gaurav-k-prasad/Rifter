@@ -1,5 +1,24 @@
-export function initDataChannel(channel) {
+export function removeClientFromMap(setClients, client) {
+  setClients((prev) => {
+    const newMap = new Map(prev);
+    console.log(newMap);
+    console.log(client);
+    console.log(newMap.delete(client));
+    return newMap;
+  });
+}
+
+export function addClientToMap(setClients, client, clientCon) {
+  setClients((prev) => {
+    const newMap = new Map(prev);
+    newMap.set(client, clientCon);
+    return newMap;
+  });
+}
+
+export function initDataChannel(channel, setCallMode) {
   channel.addEventListener("open", () => {
+    setCallMode("call");
     console.log("Data channel opened");
   });
   channel.addEventListener("close", () => {
@@ -14,10 +33,10 @@ export async function initPeerConnection(
   configuration,
   stream,
   remoteVideo,
-  socket
+  socket,
+  setCallMode
 ) {
   const peerConnection = new RTCPeerConnection(configuration);
-  peerConnection.icePending = [];
 
   peerConnection.addEventListener("icecandidate", (event) => {
     console.log("ice candidate found");
@@ -48,12 +67,12 @@ export async function initPeerConnection(
   peerConnection.addEventListener("track", async (e) => {
     const [remoteStream] = e.streams;
     remoteVideo.classList.remove("hidden");
-    remoteVideo.srcObject = remoteStream;
+    remoteVideo.srcObject = remoteStream; // todo what is remoteVideo
   });
 
   peerConnection.addEventListener("datachannel", (event) => {
     peerConnection.channel = event.channel;
-    initDataChannel(peerConnection.channel);
+    initDataChannel(peerConnection.channel, setCallMode);
   });
 
   stream.getTracks().forEach((track) => peerConnection.addTrack(track, stream));
@@ -61,10 +80,16 @@ export async function initPeerConnection(
   return peerConnection;
 }
 
-export async function hangup(caller = true, userId, socket, clients) {
+export function hangup(
+  caller = true,
+  userId = null,
+  socket,
+  clients,
+  setClients
+) {
   function close(user) {
-    if (user.channel) user.channel.close();
-
+    user.channel?.close();
+    // todo remove the video
     user.getSenders().forEach((sender) => {
       user.removeTrack(sender);
     });
@@ -73,21 +98,22 @@ export async function hangup(caller = true, userId, socket, clients) {
   }
 
   if (!caller) {
-    close(clients.get(userId));
-    clients.delete(userId);
+    close(clients.get(userId)?.connection);
+    removeClientFromMap(setClients, userId);
     return;
   }
-
+  console.log(clients);
   for (let peerConnection of clients) {
     socket.send(JSON.stringify({ type: "bye", user: peerConnection[0] }));
 
-    close(peerConnection[1]);
+    close(peerConnection[1]?.connection);
     console.log("call ended");
   }
-  clients.clear();
+  setClients(new Map());
 }
 
-export async function makeCall(socket) {
+export function makeCall(socket, clients, setClients) {
+  hangup(true, null, socket, clients, setClients);
   socket.send(JSON.stringify({ type: "join" }));
 }
 
@@ -97,72 +123,76 @@ export async function handleSocketMessage(
   clients,
   configuration,
   stream,
-  remoteVideo
+  remoteVideo,
+  setClients,
+  setCallMode
 ) {
   const data = JSON.parse(message.data);
 
-  if (data.type == "bye") {
-    await hangup(false, data.user, socket, clients);
-  } else if (data.type == "ice") {
-    let peerConnection = clients.get(data.from);
-    if (clients.has(data.from)) {
-      await peerConnection.addIceCandidate(data.ice);
-    } else {
-      peerConnection.icePending.push(data.ice);
+  switch (data.type) {
+    case "bye": {
+      hangup(false, data.user, socket, clients, setClients);
+      break;
     }
-  } else if (data.type == "peerInfo") {
-    console.log(data.peerInfo);
-    for (let client of data.peerInfo) {
+    case "ice": {
+      if (clients.has(data.from)) {
+        let peerConnection = clients.get(data.from).connection;
+        await peerConnection.addIceCandidate(data.ice);
+      }
+      break;
+    }
+    case "peerInfo": {
+      for (let client of data.peerInfo) {
+        const peerConnection = await initPeerConnection(
+          configuration,
+          stream,
+          remoteVideo,
+          socket,
+          setCallMode
+        );
+        peerConnection.to = client;
+        peerConnection.channel = peerConnection.createDataChannel("channel");
+        initDataChannel(peerConnection.channel, setCallMode);
+
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        addClientToMap(setClients, client, { connection: peerConnection });
+
+        socket.send(JSON.stringify({ offer, type: "offer", to: client }));
+      }
+      break;
+    }
+    case "answer": {
+      console.log("data.answer :>> ", data);
+
+      const peerConnection = clients.get(data.from).connection;
+      const remoteDesc = new RTCSessionDescription(data.answer);
+      console.log(peerConnection);
+      await peerConnection.setRemoteDescription(remoteDesc);
+      break;
+    }
+    case "offer": {
+      console.log("data.offer :>>", data.offer);
+
       const peerConnection = await initPeerConnection(
         configuration,
         stream,
         remoteVideo,
-        socket
+        socket,
+        setCallMode
       );
-      peerConnection.to = client;
-      peerConnection.channel = peerConnection.createDataChannel("channel");
-      initDataChannel(peerConnection.channel);
+      peerConnection.to = data.from;
+      addClientToMap(setClients, data.from, { connection: peerConnection });
 
-      const offer = await peerConnection.createOffer();
-      await peerConnection.setLocalDescription(offer);
-      clients.set(client, peerConnection);
+      const remoteDesc = new RTCSessionDescription(data.offer);
+      peerConnection.setRemoteDescription(remoteDesc);
 
-      socket.send(JSON.stringify({ offer, type: "offer", to: client }));
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+
+      socket.send(JSON.stringify({ answer, to: data.from, type: "answer" }));
+      break;
     }
-  } else if (data.answer) {
-    console.log("calling :>> ", data.answer);
-
-    const peerConnection = clients.get(data.from);
-    const remoteDesc = new RTCSessionDescription(data.answer);
-
-    peerConnection.icePending.forEach(async (ice) => {
-      await peerConnection.addIceCandidate(ice);
-    });
-
-    await peerConnection.setRemoteDescription(remoteDesc);
-  } else if (data.offer) {
-    console.log("answering :>>", data.offer);
-
-    const peerConnection = await initPeerConnection(
-      configuration,
-      stream,
-      remoteVideo,
-      socket
-    );
-    peerConnection.to = data.from;
-    clients.set(data.from, peerConnection);
-
-    const remoteDesc = new RTCSessionDescription(data.offer);
-    peerConnection.icePending.forEach(async (ice) => {
-      await peerConnection.addIceCandidate(ice);
-    });
-
-    peerConnection.setRemoteDescription(remoteDesc);
-
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-
-    socket.send(JSON.stringify({ answer, to: data.from, type: "answer" }));
   }
 }
 

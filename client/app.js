@@ -174,6 +174,7 @@ socket.addEventListener("message", async (message) => {
   if (data.type == "bye") {
     await hangup(false, data.user);
   } else if (data.type == "ice") {
+    // ! bug !! >>
     let peerConnection = clients.get(data.from).connection;
     if (clients.has(data.from)) {
       d++;
