@@ -6,6 +6,7 @@ import {
   makeCall,
   openMediaDevices,
 } from "../../utils/videoCallUtils.js";
+import Video from "./Video.jsx";
 
 const CREATE = "create";
 const JOIN = "join";
@@ -90,51 +91,62 @@ const VideoCall = () => {
   }
 
   return (
-    <fieldset>
-      <video autoPlay muted draggable="false" ref={videoRef}></video>
-      {callMode == IDLE && (
-        <select
-          name="mode"
-          id="mode"
-          value={roomMode}
-          onChange={(e) => {
-            setRoomMode(e.target.value);
-          }}
-        >
-          <option value="create">Create</option>
-          <option value="join">Join</option>
-        </select>
-      )}
-      {callMode == IDLE && roomMode == JOIN && (
-        <input type="text" name="" id="" placeholder="Room ID" />
-      )}
+    <>
+      <fieldset>
+        <video autoPlay muted draggable="false" ref={videoRef}></video>
+        {callMode == IDLE && (
+          <select
+            name="mode"
+            id="mode"
+            value={roomMode}
+            onChange={(e) => {
+              setRoomMode(e.target.value);
+            }}
+          >
+            <option value="create">Create</option>
+            <option value="join">Join</option>
+          </select>
+        )}
+        {callMode == IDLE && roomMode == JOIN && (
+          <input type="text" name="" id="" placeholder="Room ID" />
+        )}
 
-      {callMode == CALL ? (
-        <button
-          onClick={() => {
-            hangup(
-              true,
-              videoRef.current,
-              socketRef.current,
-              clients,
-              setClients
-            );
-            setCallMode(IDLE);
-          }}
-        >
-          Hang up
-        </button>
-      ) : (
-        <button
-          onClick={() => {
-            makeCall(socketRef.current, clients, setClients);
-            setCallMode(CALL);
-          }}
-        >
-          {roomMode == CREATE ? "Create" : "Join"}
-        </button>
-      )}
-    </fieldset>
+        {callMode == CALL ? (
+          <button
+            onClick={() => {
+              hangup(
+                true,
+                videoRef.current,
+                socketRef.current,
+                clients,
+                setClients
+              );
+              setCallMode(IDLE);
+            }}
+          >
+            Hang up
+          </button>
+        ) : (
+          <button
+            onClick={() => {
+              makeCall(socketRef.current, clients, setClients);
+              setCallMode(CALL);
+            }}
+          >
+            {roomMode == CREATE ? "Create" : "Join"}
+          </button>
+        )}
+      </fieldset>
+
+      <div>
+        {Array.from(clients.entries()).map(([userId, { stream }]) => (
+          <div key={userId}>
+            <h3>User: {userId}</h3>
+            {stream && <Video stream={stream} />}
+          </div>
+        ))}
+      </div>
+    </>
   );
 };
 

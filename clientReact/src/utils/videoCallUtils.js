@@ -1,9 +1,7 @@
 export function removeClientFromMap(setClients, client) {
   setClients((prev) => {
     const newMap = new Map(prev);
-    console.log(newMap);
-    console.log(client);
-    console.log(newMap.delete(client));
+    newMap.delete(client);
     return newMap;
   });
 }
@@ -12,6 +10,14 @@ export function addClientToMap(setClients, client, clientCon) {
   setClients((prev) => {
     const newMap = new Map(prev);
     newMap.set(client, clientCon);
+    return newMap;
+  });
+}
+
+export function addStreamToClient(setClients, client, stream) {
+  setClients((prev) => {
+    const newMap = new Map(prev);
+    newMap.set(client, { ...prev.get(client), stream });
     return newMap;
   });
 }
@@ -34,7 +40,8 @@ export async function initPeerConnection(
   stream,
   remoteVideo,
   socket,
-  setCallMode
+  setCallMode,
+  setClients
 ) {
   const peerConnection = new RTCPeerConnection(configuration);
 
@@ -66,8 +73,7 @@ export async function initPeerConnection(
 
   peerConnection.addEventListener("track", async (e) => {
     const [remoteStream] = e.streams;
-    remoteVideo.classList.remove("hidden");
-    remoteVideo.srcObject = remoteStream; // todo what is remoteVideo
+    addStreamToClient(setClients, peerConnection.to, remoteStream);
   });
 
   peerConnection.addEventListener("datachannel", (event) => {
@@ -88,6 +94,8 @@ export function hangup(
   setClients
 ) {
   function close(user) {
+    if (!user) return;
+    
     user.channel?.close();
     // todo remove the video
     user.getSenders().forEach((sender) => {
@@ -148,7 +156,8 @@ export async function handleSocketMessage(
           stream,
           remoteVideo,
           socket,
-          setCallMode
+          setCallMode,
+          setClients
         );
         peerConnection.to = client;
         peerConnection.channel = peerConnection.createDataChannel("channel");
@@ -179,7 +188,8 @@ export async function handleSocketMessage(
         stream,
         remoteVideo,
         socket,
-        setCallMode
+        setCallMode,
+        setClients
       );
       peerConnection.to = data.from;
       addClientToMap(setClients, data.from, { connection: peerConnection });
