@@ -1,7 +1,18 @@
-import React, { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import {
+  create,
+  handleSocketMessage,
+  hangup,
+  initiateWebSocket,
+  join,
+  openMediaDevices,
+} from "../../utils/videoCallUtils.js";
+import Video from "./Video.jsx";
 
-const CALLING = 0;
-const ANSWERING = 1;
+const CREATE = "create";
+const JOIN = "join";
+const IDLE = "idle";
+const CALL = "call";
 
 const configuration = {
   iceServers: [
@@ -26,180 +37,130 @@ const constraints = {
 };
 
 const VideoCall = () => {
-  const currStatus = useRef(ANSWERING);
-  const localVideoRef = useRef(null);
-  const remoteVideoRef = useRef(null);
-  const peerConnectionRef = useRef(null);
-  const dataChannelRef = useRef(null);
+  const [isConnected, setIsConnected] = useState(null);
+  const [roomMode, setRoomMode] = useState(CREATE);
+  const [callMode, setCallMode] = useState(IDLE);
+  const [clients, setClients] = useState(new Map());
+  const [myRoomId, setMyRoomId] = useState(null);
+  const [joinRoomId, setJoinRoomId] = useState("");
+  const videoRef = useRef(null);
+
+  const clientsRef = useRef(clients);
+  const streamRef = useRef(null);
   const socketRef = useRef(null);
 
-  // Initialize WebSocket connection on mount
   useEffect(() => {
-    socketRef.current = new WebSocket(
-      "https://x8c19r2x-3000.inc1.devtunnels.ms/"
-    );
+    clientsRef.current = clients;
+    if (clients.size == 0) setCallMode(IDLE);
+  }, [clients]);
 
-    socketRef.current.onmessage = handleSocketMessage;
+  useEffect(() => {
+    if (!socketRef.current) {
+      socketRef.current = initiateWebSocket();
 
-    // Initialize PeerConnection when component mounts
-    initPeerConnection();
+      socketRef.current.addEventListener("open", () => {
+        setIsConnected(true);
+      });
+      socketRef.current.addEventListener("message", async (message) => {
+        handleSocketMessage(
+          message,
+          socketRef.current,
+          clientsRef.current,
+          configuration,
+          streamRef.current,
+          videoRef.current, // todo remote video
+          setClients,
+          setCallMode,
+          setMyRoomId
+        );
+      });
+      socketRef.current.addEventListener("close", () => {
+        setIsConnected(false);
+      });
+    }
 
-    // Clean up on unmount
     return () => {
-      if (socketRef.current) socketRef.current.close();
-      if (peerConnectionRef.current) peerConnectionRef.current.close();
+      socketRef.current?.close();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const openMediaDevices = async (constraints) => {
-    return await navigator.mediaDevices.getUserMedia(constraints);
-  };
+  useEffect(() => {
+    (async () => {
+      streamRef.current = await openMediaDevices(constraints);
+    })();
+  }, []);
 
-  const initDataChannel = (channel) => {
-    channel.onopen = () => console.log("Data channel opened");
-    channel.onclose = () => console.log("Data channel closed");
-    channel.onmessage = (message) => console.log(message.data);
-  };
-
-  const initPeerConnection = async () => {
-    const peerConnection = new RTCPeerConnection(configuration);
-    peerConnectionRef.current = peerConnection;
-
-    // ICE candidate event
-    peerConnection.onicecandidate = (event) => {
-      console.log("ice candidate found");
-      if (event.candidate) {
-        socketRef.current.send(
-          JSON.stringify({ ice: event.candidate, type: "ice" })
-        );
-      }
-    };
-
-    // Connection state changes
-    peerConnection.onconnectionstatechange = () => {
-      if (peerConnection.connectionState === "connected") {
-        console.log("Connected");
-      }
-    };
-
-    peerConnection.onicegatheringstatechange = () =>
-      console.log(
-        "ICE Gathering State Changed:",
-        peerConnection.iceGatheringState
-      );
-
-    // Receiving remote track
-    peerConnection.ontrack = (e) => {
-      const [remoteStream] = e.streams;
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = remoteStream;
-        remoteVideoRef.current.classList.remove("hidden");
-      }
-    };
-
-    // Data channel received from remote peer
-    peerConnection.ondatachannel = (event) => {
-      dataChannelRef.current = event.channel;
-      initDataChannel(dataChannelRef.current);
-    };
-
-    try {
-      const stream = await openMediaDevices(constraints);
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
-      stream.getTracks().forEach((track) => {
-        peerConnection.addTrack(track, stream);
-      });
-    } catch (error) {
-      console.error("Error accessing media devices.", error);
-    }
-  };
-
-  const hangup = async (caller = true) => {
-    if (dataChannelRef.current) {
-      dataChannelRef.current.close();
-    }
-
-    if (peerConnectionRef.current) {
-      peerConnectionRef.current.getSenders().forEach((sender) => {
-        peerConnectionRef.current.removeTrack(sender);
-      });
-      peerConnectionRef.current.close();
-      console.log("call ended");
-    }
-
-    if (caller && socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: "bye" }));
-    }
-
-    currStatus.current = ANSWERING;
-    await initPeerConnection();
-  };
-
-  const makeCall = async () => {
-    currStatus.current = CALLING;
-    dataChannelRef.current =
-      peerConnectionRef.current.createDataChannel("channel");
-    initDataChannel(dataChannelRef.current);
-
-    const offer = await peerConnectionRef.current.createOffer();
-
-    console.log("offer :>>", offer);
-    await peerConnectionRef.current.setLocalDescription(offer);
-
-    socketRef.current.send(JSON.stringify({ offer, type: "offer" }));
-  };
-
-  const handleSocketMessage = async (messageEvent) => {
-    const data = JSON.parse(messageEvent.data);
-
-    if (data.type === "bye") {
-      await hangup(false);
-    } else if (data.type === "ice") {
-      try {
-        await peerConnectionRef.current.addIceCandidate(data.ice);
-      } catch (e) {
-        console.error("Error adding received ice candidate", e);
-      }
-    } else if (data.type === "answer" && currStatus.current === CALLING) {
-      console.log("Received answer: ", data);
-      await peerConnectionRef.current.setRemoteDescription(data);
-    } else if (data.type === "offer" && currStatus.current === ANSWERING) {
-      console.log("Received offer: ", data);
-
-      await peerConnectionRef.current.setRemoteDescription(data);
-      const answer = await peerConnectionRef.current.createAnswer();
-      await peerConnectionRef.current.setLocalDescription(answer);
-
-      socketRef.current.send(JSON.stringify({ answer, type: "answer" }));
-    }
-  };
+  if (!isConnected) {
+    return <p>Connecting...</p>;
+  }
 
   return (
-    <div className="video-call-container">
-      <video
-        id="local-video"
-        ref={localVideoRef}
-        autoPlay
-        muted
-        playsInline
-        style={{ width: "300px", border: "1px solid #ccc" }}
-      />
-      <video
-        id="remote-video"
-        ref={remoteVideoRef}
-        autoPlay
-        playsInline
-        className="hidden"
-        style={{ width: "640px", border: "1px solid #ccc", marginTop: "1rem" }}
-      />
-      <div className="controls">
-        <button onClick={makeCall}>Call</button>
-        <button onClick={() => hangup()}>Hang Up</button>
+    <>
+      {myRoomId}
+      <fieldset>
+        <video autoPlay muted draggable="false" ref={videoRef}></video>
+        {callMode == IDLE && (
+          <select
+            name="mode"
+            id="mode"
+            value={roomMode}
+            onChange={(e) => {
+              setRoomMode(e.target.value);
+            }}
+          >
+            <option value="create">Create</option>
+            <option value="join">Join</option>
+          </select>
+        )}
+        {callMode == IDLE && roomMode == JOIN && (
+          <input
+            type="text"
+            placeholder="Room ID"
+            value={joinRoomId}
+            onChange={(e) => {
+              setJoinRoomId(e.target.value);
+            }}
+          />
+        )}
+
+        {callMode == CALL ? (
+          <button
+            onClick={() => {
+              hangup(
+                true,
+                videoRef.current,
+                socketRef.current,
+                clients,
+                setClients
+              );
+              setCallMode(IDLE);
+            }}
+          >
+            Hang up
+          </button>
+        ) : (
+          <button
+            onClick={() => {
+              roomMode == CREATE
+                ? create(socketRef.current, clients, setClients)
+                : join(socketRef.current, clients, joinRoomId, setClients);
+              setCallMode(CALL);
+            }}
+          >
+            {roomMode == CREATE ? "Create" : "Join"}
+          </button>
+        )}
+      </fieldset>
+
+      <div>
+        {Array.from(clients.entries()).map(([userId, { stream }]) => (
+          <div key={userId}>
+            <h3>User: {userId}</h3>
+            {stream && <Video stream={stream} />}
+          </div>
+        ))}
       </div>
-    </div>
+    </>
   );
 };
 
