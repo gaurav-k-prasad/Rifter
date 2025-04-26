@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  create,
   handleSocketMessage,
   hangup,
   initiateWebSocket,
-  makeCall,
+  join,
   openMediaDevices,
 } from "../../utils/videoCallUtils.js";
 import Video from "./Video.jsx";
@@ -40,6 +41,8 @@ const VideoCall = () => {
   const [roomMode, setRoomMode] = useState(CREATE);
   const [callMode, setCallMode] = useState(IDLE);
   const [clients, setClients] = useState(new Map());
+  const [myRoomId, setMyRoomId] = useState(null);
+  const [joinRoomId, setJoinRoomId] = useState("");
   const videoRef = useRef(null);
 
   const clientsRef = useRef(clients);
@@ -67,7 +70,8 @@ const VideoCall = () => {
           streamRef.current,
           videoRef.current, // todo remote video
           setClients,
-          setCallMode
+          setCallMode,
+          setMyRoomId
         );
       });
       socketRef.current.addEventListener("close", () => {
@@ -92,6 +96,7 @@ const VideoCall = () => {
 
   return (
     <>
+      {myRoomId}
       <fieldset>
         <video autoPlay muted draggable="false" ref={videoRef}></video>
         {callMode == IDLE && (
@@ -108,7 +113,14 @@ const VideoCall = () => {
           </select>
         )}
         {callMode == IDLE && roomMode == JOIN && (
-          <input type="text" name="" id="" placeholder="Room ID" />
+          <input
+            type="text"
+            placeholder="Room ID"
+            value={joinRoomId}
+            onChange={(e) => {
+              setJoinRoomId(e.target.value);
+            }}
+          />
         )}
 
         {callMode == CALL ? (
@@ -129,7 +141,9 @@ const VideoCall = () => {
         ) : (
           <button
             onClick={() => {
-              makeCall(socketRef.current, clients, setClients);
+              roomMode == CREATE
+                ? create(socketRef.current, clients, setClients)
+                : join(socketRef.current, clients, joinRoomId, setClients);
               setCallMode(CALL);
             }}
           >

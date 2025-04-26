@@ -22,10 +22,10 @@ function createRoom() {
   return roomId;
 }
 
-function joinRoom(clientId, roomId, ws) {
+function joinRoom(clientId, roomId) {
   if (!rooms.has(roomId)) roomId = createRoom(); // <> adding room
 
-  rooms.get(roomId).push(ws);
+  rooms.get(roomId).push(clientId);
   clients.get(clientId).room = roomId;
 }
 
@@ -55,27 +55,31 @@ wss.on("connection", (ws) => {
     if (data.roomId) {
       roomId = data.roomId;
       if (!isRoomPresent(roomId))
-        return ws.send(JSON.stringify({ message: "wrong room id" }));
+        return ws.send(
+          JSON.stringify({ type: "error", message: "wrong room id" })
+        );
     }
 
     switch (data.type) {
       case "create":
         leaveRoom(clientId); // To exit previous room
         let newRoom = createRoom(); // Creating a room
-        joinRoom(clientId, newRoom, ws); // Joining the room
+        joinRoom(clientId, newRoom); // Joining the room
+        ws.send(JSON.stringify({ type: "roomId", roomId: newRoom }));
         break;
 
       case "join":
         leaveRoom(clientId); // To exit previous room
 
         const peerInfo = [];
-        for (let client of clients) {
-          if (client[0] === clientId) continue;
-          peerInfo.push(client[0]);
+        let clientsInRoom = rooms.get(roomId);
+        console.log(clientsInRoom);
+        for (let client of clientsInRoom) {
+          if (client !== clientId) peerInfo.push(client);
         }
         ws.send(JSON.stringify({ type: "peerInfo", peerInfo }));
-
-        joinRoom(clientId, roomId, ws);
+        console.log("peerInfo :>> ", peerInfo);
+        joinRoom(clientId, roomId);
         break;
 
       case "leave":

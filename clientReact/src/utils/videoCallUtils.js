@@ -95,7 +95,7 @@ export function hangup(
 ) {
   function close(user) {
     if (!user) return;
-    
+
     user.channel?.close();
     // todo remove the video
     user.getSenders().forEach((sender) => {
@@ -120,9 +120,14 @@ export function hangup(
   setClients(new Map());
 }
 
-export function makeCall(socket, clients, setClients) {
+export function join(socket, clients, roomId, setClients) {
   hangup(true, null, socket, clients, setClients);
-  socket.send(JSON.stringify({ type: "join" }));
+  socket.send(JSON.stringify({ type: "join", roomId }));
+}
+
+export function create(socket, clients, setClients) {
+  hangup(true, null, socket, clients, setClients);
+  socket.send(JSON.stringify({ type: "create" }));
 }
 
 export async function handleSocketMessage(
@@ -133,7 +138,8 @@ export async function handleSocketMessage(
   stream,
   remoteVideo,
   setClients,
-  setCallMode
+  setCallMode,
+  setMyRoomId
 ) {
   const data = JSON.parse(message.data);
 
@@ -149,6 +155,9 @@ export async function handleSocketMessage(
       }
       break;
     }
+    case "roomId":
+      setMyRoomId(data.roomId);
+      break;
     case "peerInfo": {
       for (let client of data.peerInfo) {
         const peerConnection = await initPeerConnection(
