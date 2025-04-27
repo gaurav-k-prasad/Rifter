@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { WebSocketServer } from "ws";
 
-const port = 3000;
+const port = 8080;
 const wss = new WebSocketServer({ port });
 let c = 1;
 
@@ -31,11 +31,12 @@ function joinRoom(clientId, roomId) {
 
 function leaveRoom(clientId) {
   const roomId = clients.get(clientId).room;
+  console.log("roomId :>> ", roomId);
   if (!roomId) return;
 
   rooms.set(
     roomId,
-    rooms.get(roomId).filter((client) => client.clientId !== clientId)
+    rooms.get(roomId).filter((client) => client !== clientId)
   );
   if (rooms.get(roomId).length === 0) rooms.delete(roomId);
   delete clients.get(clientId).room;
@@ -74,6 +75,10 @@ wss.on("connection", (ws) => {
         const peerInfo = [];
         let clientsInRoom = rooms.get(roomId);
         console.log(clientsInRoom);
+        if (!clientsInRoom) {
+          console.log(roomId, clients);
+        }
+
         for (let client of clientsInRoom) {
           if (client !== clientId) peerInfo.push(client);
         }

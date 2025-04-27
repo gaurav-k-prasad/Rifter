@@ -43,8 +43,8 @@ const VideoCall = () => {
   const [clients, setClients] = useState(new Map());
   const [myRoomId, setMyRoomId] = useState(null);
   const [joinRoomId, setJoinRoomId] = useState("");
+  
   const videoRef = useRef(null);
-
   const clientsRef = useRef(clients);
   const streamRef = useRef(null);
   const socketRef = useRef(null);
